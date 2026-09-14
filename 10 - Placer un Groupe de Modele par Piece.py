@@ -57,10 +57,30 @@ def safe_family_name(sym):
 
 
 def safe_type_name(sym):
+    # .Name peut echouer (ou renvoyer vide) sur certains ElementType,
+    # GroupType inclus - meme constat et meme repli deja utilises dans
+    # Events-Local-MoMo (voir get_family_and_type) : si .Name ne donne
+    # rien d'exploitable, on retombe sur les parametres integres qui
+    # portent aussi le nom du type.
     try:
-        return sym.Name
+        n = sym.Name
+        if n:
+            return n
     except Exception:
-        return "Sans nom"
+        pass
+    for bip_name in ("SYMBOL_NAME_PARAM", "ALL_MODEL_TYPE_NAME"):
+        try:
+            bip = getattr(BuiltInParameter, bip_name, None)
+            if bip is None:
+                continue
+            p = sym.get_Parameter(bip)
+            if p is not None and p.HasValue:
+                s = p.AsString()
+                if s:
+                    return s
+        except Exception:
+            continue
+    return "Sans nom"
 
 
 def collect_ids_safe(collector):
