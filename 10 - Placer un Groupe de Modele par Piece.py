@@ -269,6 +269,46 @@ def cap_porte(facing):
     return ang
 
 
+def get_door_point(d):
+    try:
+        loc = d.Location
+        if loc is not None and hasattr(loc, "Point"):
+            return loc.Point
+    except Exception:
+        pass
+    return None
+
+
+def find_nearest_door(room, doors_of_type):
+    """Repli purement geometrique : la porte du type choisi la plus proche
+    (distance horizontale) du point d'implantation de la piece.
+
+    FromRoom/ToRoom (l'approche "officielle", utilisee en premier) depend
+    du calcul de delimitement des pieces par Revit (Room Bounding), qui
+    peut renvoyer systematiquement rien meme quand les portes et les
+    pieces sont bien presentes et correctement placees dans le modele -
+    c'est un defaut connu de cette API, pas forcement un probleme du
+    projet. Ce repli ne depend d'aucun calcul prealable de Revit."""
+    try:
+        room_pt = room.Location.Point
+    except Exception:
+        return None
+
+    best_door = None
+    best_dist = None
+    for d in doors_of_type:
+        door_pt = get_door_point(d)
+        if door_pt is None:
+            continue
+        dx = door_pt.X - room_pt.X
+        dy = door_pt.Y - room_pt.Y
+        dist = dx * dx + dy * dy  # comparaison seule : pas besoin de racine carree
+        if best_dist is None or dist < best_dist:
+            best_dist = dist
+            best_door = d
+    return best_door
+
+
 # ============================================================
 # INTERFACE (Windows Forms - meme charte que les autres scripts du projet)
 # ============================================================
@@ -540,15 +580,21 @@ def main():
     # cibles ont trouve leur porte, inutile de continuer a scanner le
     # reste du batiment une fois le resultat complet.
     porte_par_piece = {}
+    doors_of_type = []
     if door_type is not None:
         for d in all_doors:
-            if len(porte_par_piece) >= len(cible_ids):
-                break
             try:
                 if int(d.Symbol.Id.IntegerValue) != int(door_type.Id.IntegerValue):
                     continue
             except Exception:
                 continue
+            doors_of_type.append(d)
+
+        # 1) Methode "officielle" : FromRoom/ToRoom (delimitement des
+        # pieces calcule par Revit).
+        for d in doors_of_type:
+            if len(porte_par_piece) >= len(cible_ids):
+                break
             for rm in door_rooms(d):
                 try:
                     rm_id = int(rm.Id.IntegerValue)
@@ -556,6 +602,20 @@ def main():
                     continue
                 if rm_id in cible_ids and rm_id not in porte_par_piece:
                     porte_par_piece[rm_id] = d
+
+        # 2) Repli geometrique pour les pieces non resolues par
+        # FromRoom/ToRoom (voir find_nearest_door : ce calcul de Revit
+        # peut ne rien renvoyer meme quand tout est bien modelise).
+        for room in cibles:
+            try:
+                room_id = int(room.Id.IntegerValue)
+            except Exception:
+                continue
+            if room_id in porte_par_piece:
+                continue
+            nearest = find_nearest_door(room, doors_of_type)
+            if nearest is not None:
+                porte_par_piece[room_id] = nearest
 
     places = 0
     sans_porte = 0
