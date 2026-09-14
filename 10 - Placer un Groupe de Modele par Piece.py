@@ -620,11 +620,22 @@ def main():
                 try:
                     # Le groupe place sans rotation est suppose avoir sa
                     # porte de reference au Nord (+Y) - la rotation a
-                    # appliquer est donc directement le cap de la porte
-                    # reelle : si elle est deja au Nord, rot = 0, rien a
-                    # faire ; sinon le groupe tourne exactement de cet
-                    # angle pour correspondre a la porte de la piece.
-                    rot = cap_porte(porte.FacingOrientation)
+                    # appliquer est donc le cap de la porte reelle, mais
+                    # INVERSE : cap_porte() donne un cap boussole (0=Nord,
+                    # 90=Est, sens HORAIRE), alors que RotateElement fait
+                    # tourner un angle positif dans le sens ANTI-HORAIRE
+                    # (regle de la main droite, axe pointant vers +Z).
+                    #
+                    # Sans cette inversion, l'ecart avec le bon angle vaut
+                    # exactement 2x le cap vise (mod 360) : nul pile a 0 et
+                    # 180 degres (la rotation tombe juste, par hasard
+                    # mathematique - pas une coincidence de calibrage), mais
+                    # de 180 degres a 90/270 (le groupe finit tourne dans le
+                    # sens oppose - passe parfois inapercu si le meuble est
+                    # symetrique) et d'une valeur quelconque, donc flagrante,
+                    # sur un angle irregulier.
+                    rot = -cap_porte(porte.FacingOrientation)
+                    rot = ((rot % 360.0) + 360.0) % 360.0
 
                     if rot > 0.01 and rot < 359.99:
                         room_pt = room.Location.Point
