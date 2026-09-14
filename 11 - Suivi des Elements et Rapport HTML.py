@@ -2283,7 +2283,15 @@ APP_JS_TEMPLATE = r"""
         var defaultExclude = null;
         if (detailFirstLoad) {
           detailFirstLoad = false;
-          if (snap.columns.indexOf('TypeSousProjet') !== -1) defaultExclude = {TypeSousProjet: ['Utilisateur']};
+          var tspIdx = snap.columns.indexOf('TypeSousProjet');
+          // Ne filtrer sur "Utilisateur" par defaut QUE si cette valeur
+          // existe reellement dans l'instantane - sur un document non
+          // partage (pas de sous-projet), TypeSousProjet vaut "N/A" pour
+          // tous les elements et ce filtre par defaut cachait alors
+          // TOUTE la table, page vide malgre des elements bien presents.
+          if (tspIdx !== -1 && snap.rows.some(function(r){ return r[tspIdx] === 'Utilisateur'; })) {
+            defaultExclude = {TypeSousProjet: ['Utilisateur']};
+          }
         }
         var aug = augmentWithExtraParams(snap.columns, snap.rows, function(){ return key; });
         table.setData(aug.columns, aug.rows, {defaultExcludeByColumn: defaultExclude});
@@ -2412,6 +2420,19 @@ APP_JS_TEMPLATE = r"""
 
     var dateShow = document.getElementById('s_dateShow');
     var wsKindFilter = document.getElementById('s_wsKindFilter');
+    // Le HTML marque "Utilisateur" comme choix par defaut (le cas courant
+    // sur un projet en travail partage / worksharing), mais un document
+    // NON partage n'a aucun sous-projet : TypeSousProjet vaut "N/A" pour
+    // tous les elements, et ce filtre par defaut cachait alors TOUT -
+    // page vide alors que la maquette contient bien des elements. Si
+    // aucune ligne ne vaut "Utilisateur", on retombe sur "Tous".
+    (function fixDefaultWsKindFilter(){
+      if (wsKindFilter.value !== 'Utilisateur') return;
+      var wsKindIdx = snapCols.indexOf('TypeSousProjet');
+      if (wsKindIdx < 0) return;
+      var hasUtilisateur = latest.rows.some(function(r){ return r[wsKindIdx] === 'Utilisateur'; });
+      if (!hasUtilisateur) wsKindFilter.value = '__ALL__';
+    })();
     var groupColsListEl = document.getElementById('s_groupColsList');
     var pivotCatEl = document.getElementById('s_pivotCat');
     var catValuesEl = document.getElementById('s_catValues');
@@ -2818,6 +2839,13 @@ APP_JS_TEMPLATE = r"""
     var personFieldSelect = document.getElementById('viz_personField');
     var personSelect = document.getElementById('viz_person');
     var wsKindIdx = colIdx['TypeSousProjet'];
+    // Meme correctif que l'onglet Recapitulatif : "Utilisateur" par
+    // defaut n'a aucun sens (et masque tout) sur un document non
+    // partage, ou TypeSousProjet vaut "N/A" pour chaque element.
+    if (wsKindSelect.value === 'Utilisateur' && wsKindIdx !== undefined) {
+      var hasUtilisateurViz = latest.rows.some(function(r){ return r[wsKindIdx] === 'Utilisateur'; });
+      if (!hasUtilisateurViz) wsKindSelect.value = '__ALL__';
+    }
     var catTypeIdx = colIdx['CategoryType'];
     var categoryIdx = colIdx['Category'];
     var creatorIdx0 = colIdx['Creator'];
