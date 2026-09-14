@@ -800,7 +800,15 @@ for fname in os.listdir(output_folder):
                 continue
             file_header = rows[0]
             file_rows = [r for r in rows[1:] if len(r) == len(file_header)]
-            snapshots_encoded[display_label] = dict_encode_snapshot(file_header, file_rows)
+            # csv.reader() sur un fichier ouvert en mode binaire (voir
+            # open_csv_for_read) renvoie des chaines brutes (str), jamais
+            # passees par sanitize_str - contrairement au run courant
+            # (to_row_values(current_run_rows) juste au-dessus), un ancien
+            # fichier Snapshot_*.csv ecrit avant ce correctif peut donc
+            # encore contenir un octet mal encode et faire echouer
+            # json.dumps() en silence pour TOUT l'historique integre.
+            snapshots_encoded[display_label] = dict_encode_snapshot(
+                to_row_values(file_header), [to_row_values(r) for r in file_rows])
     except Exception:
         pass
 
