@@ -1,6 +1,6 @@
 # HeroScriptsDynamo
 
-Suite de scripts Python pour Dynamo (Revit) destinée à automatiser les tâches récurrentes d'un **BIM Manager** : gestion des warnings, nettoyage du modèle (filtres, gabarits de vue), gestion des éléments miroir, copie de vues entre maquettes, génération de vues par sous-projet, et placement automatique de groupes de modèle par pièce.
+Suite de scripts Python pour Dynamo (Revit) destinée à automatiser les tâches récurrentes d'un **BIM Manager** : gestion des warnings, nettoyage du modèle (filtres, gabarits de vue), gestion des éléments miroir, copie de vues entre maquettes, génération de vues par sous-projet, placement automatique de groupes de modèle par pièce, et suivi/rapport HTML de l'évolution du modèle.
 
 🎩 by **Manseur Mohamed**
 
@@ -13,7 +13,7 @@ Chaque script existe en **paire de fichiers** :
 
 Pour utiliser un script : ouvrir le `.dyn` correspondant dans Dynamo (pour Revit) et lancer l'exécution du graphe (Run).
 
-## Les 10 scripts
+## Les 11 scripts
 
 | # | Script | Description |
 |---|--------|-------------|
@@ -27,6 +27,7 @@ Pour utiliser un script : ouvrir le `.dyn` correspondant dans Dynamo (pour Revit
 | 08 | Copie Views from Link-Other Project | Copie des vues (tous types, y compris vues de dessin/détails) depuis un autre document ouvert ou un lien Revit, avec filtres, paramètres, gabarit de vue et annotations. |
 | 09 | Création de Vues par Sous-Projet | Crée une vue 3D et/ou un plan (View Range étendu, filaire) par sous-projet, avec uniquement ce sous-projet visible dans la vue — met à jour les vues déjà existantes plutôt que de les recréer. |
 | 10 | Placer un Groupe de Modèle par Pièce | Place un groupe de modèle (mobilier, équipement) dans toutes les pièces dont un paramètre choisi vaut une valeur choisie, orienté selon la porte de chaque pièce. Reprise en Dynamo de la logique métier du plugin Revit autonome [BIMATIKA — Groupe par pièce](https://github.com/Manseur-Moh/BimAtika-GroupeToRoom). |
+| 11 | Suivi des Éléments et Rapport HTML | À chaque exécution, prend un instantané de tous les éléments du projet (catégorie, famille, type, sous-projet, créateur, dernier modificateur, paramètres) et génère un rapport HTML autonome (onglets Détail / Récapitulatif / Diagrammes) permettant de comparer deux dates (Ajouté/Supprimé/Modifié) et suivre l'évolution du modèle dans le temps — tout l'historique est embarqué dans le HTML, rien à re-choisir à l'ouverture. Une fenêtre demande le dossier d'export au lancement (dernier dossier utilisé mémorisé). Moteur **CPython3**. |
 
 ## Interface
 
@@ -35,7 +36,8 @@ Tous les scripts partagent la même charte graphique (Windows Forms) : Segoe UI,
 ## Prérequis
 
 - Autodesk Revit + Dynamo (module Player ou Dynamo for Revit).
-- Moteur Python du nœud : **IronPython2** (testé sur Revit 2024). Compatible CPython3 sous réserve d'adapter l'`Engine` dans le `.dyn` (voir `CLAUDE.md`).
+- Scripts 01–10 : moteur **IronPython2** (testé sur Revit 2024). Compatible CPython3 sous réserve d'adapter l'`Engine` dans le `.dyn` (voir `CLAUDE.md`).
+- Script 11 : moteur **CPython3** (conçu pour fonctionner sous les deux moteurs).
 
 ## Notes techniques
 
