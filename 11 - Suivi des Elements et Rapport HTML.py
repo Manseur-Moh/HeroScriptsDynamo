@@ -209,6 +209,17 @@ def save_last_folder(folder):
         pass
 
 
+# NOTE pythonnet (moteur CPython3, ne se produit pas sous IronPython2) :
+# Font("Segoe UI", size, FontStyle.X) est ambigu entre les surcharges
+# .NET Font(string, float, FontStyle) et Font(string, float, GraphicsUnit)
+# - pythonnet peut resoudre vers la MAUVAISE en se basant sur la valeur
+# entiere sous-jacente de l'enum, ce qui leve "ArgumentException:
+# Parameter is not valid" (System.Drawing.Font.CreateNativeFont) au tout
+# premier Font() cree, avant meme l'affichage de la fenetre. Ajouter
+# GraphicsUnit.Point comme 4e argument force le seul constructeur a 4
+# parametres possible et leve toute ambiguite - Point est de toute facon
+# l'unite implicite des surcharges plus courtes, donc aucun changement
+# visuel.
 class FolderPickerForm(WinForms.Form):
     def __init__(self, default_folder):
         WinForms.Form.__init__(self)
@@ -226,7 +237,7 @@ class FolderPickerForm(WinForms.Form):
 
         lbl_title = WinForms.Label()
         lbl_title.Text = "Suivi des Elements et Rapport HTML"
-        lbl_title.Font = WinDrawing.Font("Segoe UI", 14, WinDrawing.FontStyle.Bold)
+        lbl_title.Font = WinDrawing.Font("Segoe UI", 14, WinDrawing.FontStyle.Bold, WinDrawing.GraphicsUnit.Point)
         lbl_title.ForeColor = WinDrawing.Color.FromArgb(50, 50, 50)
         lbl_title.Location = WinDrawing.Point(20, 15)
         lbl_title.AutoSize = True
@@ -234,7 +245,7 @@ class FolderPickerForm(WinForms.Form):
 
         lbl_sig = WinForms.Label()
         lbl_sig.Text = "by Manseur Mohamed"
-        lbl_sig.Font = WinDrawing.Font("Segoe UI", 9, WinDrawing.FontStyle.Italic)
+        lbl_sig.Font = WinDrawing.Font("Segoe UI", 9, WinDrawing.FontStyle.Italic, WinDrawing.GraphicsUnit.Point)
         lbl_sig.ForeColor = WinDrawing.Color.FromArgb(100, 100, 100)
         lbl_sig.Location = WinDrawing.Point(390, 20)
         lbl_sig.AutoSize = True
@@ -276,7 +287,7 @@ class FolderPickerForm(WinForms.Form):
 
         self.btn_ok = WinForms.Button()
         self.btn_ok.Text = "Generer le rapport"
-        self.btn_ok.Font = WinDrawing.Font("Segoe UI", 10, WinDrawing.FontStyle.Bold)
+        self.btn_ok.Font = WinDrawing.Font("Segoe UI", 10, WinDrawing.FontStyle.Bold, WinDrawing.GraphicsUnit.Point)
         self.btn_ok.Size = WinDrawing.Size(250, 40)
         self.btn_ok.Location = WinDrawing.Point(20, 160)
         self.btn_ok.BackColor = WinDrawing.Color.FromArgb(0, 120, 215)
