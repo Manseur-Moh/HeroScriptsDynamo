@@ -1,0 +1,10 @@
+# Captures d'ecran de debogage (Visualiseur de problemes Dynamo, etc.) -
+# artefacts de session, pas des livrables du projet.
+*.png
+*.jpg
+*.jpeg
+
+# Fichiers temporaires Windows/Office
+Thumbs.db
+desktop.ini
+~$*

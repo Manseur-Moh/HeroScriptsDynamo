@@ -1,0 +1,102 @@
+{
+  "Uuid": "ce0e0659-204c-4fa9-97cf-7c4e8dd7c02d",
+  "IsCustomNode": false,
+  "Description": "",
+  "Name": "01 - Gestion Warnings par Createur",
+  "ElementResolver": {
+    "ResolutionMap": {}
+  },
+  "Inputs": [],
+  "Outputs": [],
+  "Nodes": [
+    {
+      "ConcreteType": "PythonNodeModels.PythonNode, PythonNodeModels",
+      "Code": "# ============================================================\n# 🎩 by Manseur Mohamed\n# Script Dynamo Python - Gestion des Warnings par Createur\n# ============================================================\n\nimport clr\nclr.AddReference(\u0027RevitAPI\u0027)\nclr.AddReference(\u0027RevitAPIUI\u0027)\nclr.AddReference(\u0027RevitServices\u0027)\nclr.AddReference(\u0027System\u0027)\nclr.AddReference(\u0027System.Drawing\u0027)\nclr.AddReference(\u0027System.Windows.Forms\u0027)\n\nfrom Autodesk.Revit.DB import *\nfrom Autodesk.Revit.UI import ExternalEvent, IExternalEventHandler\nfrom RevitServices.Persistence import DocumentManager\n\n# Alias capture AVANT l\u0027import de System.Windows.Forms : ce module definit\n# aussi un symbole \"View\" (enum d\u0027affichage de ListView) et pourrait\n# ambiguiser d\u0027autres noms Revit. On fige la reference dont on a besoin\n# avant que le wildcard import suivant ne l\u0027ecrase.\nRevitTransaction = Transaction\n\nfrom System.Windows.Forms import *\nfrom System.Drawing import *\nfrom System.Collections.Generic import List\n\ndoc = DocumentManager.Instance.CurrentDBDocument\nuidoc = DocumentManager.Instance.CurrentUIApplication.ActiveUIDocument\n\n# 1. Collecte des warnings avec createur\ndef get_creator(element_id):\n    # Le \"createur\" d\u0027un element n\u0027est disponible que via le worksharing\n    # (WorksharingTooltipInfo), il n\u0027existe pas de BuiltInParameter generique\n    # pour ca. Si le modele n\u0027est pas en worksharing, on retombe sur \"Inconnu\".\n    try:\n        info = WorksharingUtils.GetWorksharingTooltipInfo(doc, element_id)\n        if info and info.Creator:\n            return info.Creator\n    except:\n        pass\n    return \"Inconnu\"\n\ndef collect_warnings_data():\n    # Regroupe les warnings actuels du document par createur.\n    data = {}\n    warnings = doc.GetWarnings()\n\n    for w in warnings:\n        msg = w.GetDescriptionText()\n        failing_ids = w.GetFailingElements()  # IList[ElementId], pas des Element\n\n        for eid in failing_ids:\n            elem = doc.GetElement(eid)\n            if elem is None:\n                continue\n\n            creator = get_creator(eid)\n\n            if creator not in data:\n                data[creator] = {}\n\n            if msg not in data[creator]:\n                data[creator][msg] = []\n\n            data[creator][msg].append({\n                \u0027element\u0027: elem,\n                \u0027element_id\u0027: eid\n            })\n\n    return sorted(data.keys()), data\n\ncreators, data_by_creator = collect_warnings_data()\n\n# 2. Fonctions d\u0027action sur le document (isolement / reinitialisation)\ndef isolate_elements(view_id, element_ids):\n    # Doit etre appelee depuis un contexte API Revit valide (a l\u0027interieur\n    # d\u0027un ExternalEvent.Execute), sinon Transaction.Start() leve \"Starting\n    # a transaction from an external application running outside of API\n    # context is not allowed.\"\n    t = RevitTransaction(doc, \"Isoler elements (warnings)\")\n    try:\n        t.Start()\n        view = doc.GetElement(view_id)\n        # Reinitialiser un eventuel isolement temporaire deja actif avant\n        # d\u0027appliquer le nouveau : Revit refuse un second\n        # IsolateElementsTemporary tant que le precedent n\u0027a pas ete leve.\n        # ResetTemporaryHideIsolate() leve une exception si la vue n\u0027a AUCUN\n        # isolement actif (ce n\u0027est pas un no-op) : on l\u0027encadre donc dans\n        # son propre try/except plutot que de se fier a\n        # IsTemporaryHideIsolateActive(), qui s\u0027est revele peu fiable.\n        try:\n            view.ResetTemporaryHideIsolate()\n        except:\n            pass\n        ids_list = List[ElementId](element_ids)\n        view.IsolateElementsTemporary(ids_list)\n        t.Commit()\n        return True\n    except Exception as ex:\n        if t.HasStarted() and not t.HasEnded():\n            t.RollBack()\n        MessageBox.Show(\"Impossible d\u0027isoler : \" + str(ex), \"Erreur isolement\", MessageBoxButtons.OK, MessageBoxIcon.Error)\n        return False\n\n# 2 bis. Pont vers l\u0027API Revit depuis la fenetre non-modale\n#\n# Une fois le script Dynamo termine (OUT assigne), on n\u0027est plus dans le\n# contexte d\u0027execution du graphe : Revit refuse alors tout appel a son API\n# venant directement d\u0027un evenement WinForms (clic de bouton...). Le\n# mecanisme officiel pour continuer a utiliser l\u0027API depuis une fenetre\n# modeless est ExternalEvent : on lui confie une fonction Python a executer,\n# et Revit la rappelle des qu\u0027il est pret, dans un contexte valide.\nclass WarningsExternalEventHandler(IExternalEventHandler):\n    def __init__(self):\n        # Sous le moteur CPython3 (pythonnet), une classe qui implemente une\n        # interface .NET doit explicitement appeler le constructeur de\n        # l\u0027interface avant toute autre chose : sans cet appel, pythonnet\n        # leve \"TypeError: interface takes exactly one argument\" a\n        # l\u0027instanciation. IronPython2 tolerait de sauter cet appel, pas\n        # pythonnet.\n        IExternalEventHandler.__init__(self)\n        self.func = None\n\n    def Execute(self, uiapp):\n        if self.func is None:\n            return\n        try:\n            self.func()\n        except Exception as ex:\n            MessageBox.Show(\"Erreur : \" + str(ex), \"Erreur\", MessageBoxButtons.OK, MessageBoxIcon.Error)\n\n    def GetName(self):\n        return \"Gestion Warnings par Createur - Handler\"\n\n_event_handler = WarningsExternalEventHandler()\n_external_event = ExternalEvent.Create(_event_handler)\n\ndef run_in_api_context(func):\n    _event_handler.func = func\n    _external_event.Raise()\n\n# 3. Interface\nclass WarningForm(Form):\n    def __init__(self, creators, data):\n        Form.__init__(self)\n        self.creators = creators\n        self.data = data\n        self.selected_creator = None\n        self.selected_warning = None\n        self.element_ids = []\n        self.InitializeComponent()\n\n    def InitializeComponent(self):\n        self.Text = \"01 - Gestion des Warnings par Createur - 🎩 by Manseur Mohamed\"\n        self.Size = Size(800, 350)\n        self.StartPosition = FormStartPosition.CenterScreen\n        self.FormBorderStyle = FormBorderStyle.FixedDialog\n        self.MaximizeBox = False\n        self.TopMost = True  # reste visible pendant qu\u0027on clique dans Revit\n        self.BackColor = Color.FromArgb(240, 240, 240)\n\n        # Titre\n        lbl_title = Label()\n        lbl_title.Text = \"Gestionnaire de Warnings par Createur\"\n        lbl_title.Font = Font(\"Segoe UI\", 14, FontStyle.Bold)\n        lbl_title.ForeColor = Color.FromArgb(50, 50, 50)\n        lbl_title.Location = Point(20, 15)\n        lbl_title.AutoSize = True\n        self.Controls.Add(lbl_title)\n\n        lbl_sig = Label()\n        lbl_sig.Text = \"🎩 by Manseur Mohamed\"\n        lbl_sig.Font = Font(\"Segoe UI\", 9, FontStyle.Italic)\n        lbl_sig.ForeColor = Color.FromArgb(100, 100, 100)\n        lbl_sig.Location = Point(600, 20)\n        lbl_sig.AutoSize = True\n        self.Controls.Add(lbl_sig)\n\n        # Createur\n        lbl_creator = Label()\n        lbl_creator.Text = \"1. Selectionnez le createur :\"\n        lbl_creator.Font = Font(\"Segoe UI\", 11, FontStyle.Bold)\n        lbl_creator.Location = Point(20, 60)\n        lbl_creator.AutoSize = True\n        self.Controls.Add(lbl_creator)\n\n        self.cmb_creators = ComboBox()\n        self.cmb_creators.DropDownStyle = ComboBoxStyle.DropDownList\n        self.cmb_creators.Font = Font(\"Segoe UI\", 11)\n        self.cmb_creators.Location = Point(20, 90)\n        self.cmb_creators.Size = Size(750, 28)\n        for c in self.creators:\n            count = sum(len(v) for v in self.data[c].values())\n            self.cmb_creators.Items.Add(c + \" [\" + str(count) + \" warning(s)]\")\n        self.cmb_creators.SelectedIndexChanged += self.OnCreatorChanged\n        self.Controls.Add(self.cmb_creators)\n\n        # Warning type\n        lbl_warning = Label()\n        lbl_warning.Text = \"2. Selectionnez le warning :\"\n        lbl_warning.Font = Font(\"Segoe UI\", 11, FontStyle.Bold)\n        lbl_warning.Location = Point(20, 135)\n        lbl_warning.AutoSize = True\n        self.Controls.Add(lbl_warning)\n\n        self.cmb_warnings = ComboBox()\n        self.cmb_warnings.DropDownStyle = ComboBoxStyle.DropDownList\n        self.cmb_warnings.Font = Font(\"Segoe UI\", 10)\n        self.cmb_warnings.Location = Point(20, 165)\n        self.cmb_warnings.Size = Size(750, 25)\n        self.cmb_warnings.SelectedIndexChanged += self.OnWarningChanged\n        self.Controls.Add(self.cmb_warnings)\n\n        # Info\n        self.lbl_info = Label()\n        self.lbl_info.Text = \"0 element(s)\"\n        self.lbl_info.Font = Font(\"Segoe UI\", 10, FontStyle.Bold)\n        self.lbl_info.ForeColor = Color.FromArgb(0, 100, 0)\n        self.lbl_info.Location = Point(20, 205)\n        self.lbl_info.AutoSize = True\n        self.Controls.Add(self.lbl_info)\n\n        # Boutons\n        self.btn_current = Button()\n        self.btn_current.Text = \"Isoler dans la VUE COURANTE\"\n        self.btn_current.Font = Font(\"Segoe UI\", 11, FontStyle.Bold)\n        self.btn_current.Size = Size(750, 60)\n        self.btn_current.Location = Point(20, 240)\n        self.btn_current.BackColor = Color.FromArgb(0, 120, 215)\n        self.btn_current.ForeColor = Color.White\n        self.btn_current.FlatStyle = FlatStyle.Flat\n        self.btn_current.FlatAppearance.BorderSize = 0\n        self.btn_current.Click += self.OnIsolateCurrent\n        self.Controls.Add(self.btn_current)\n\n        if self.cmb_creators.Items.Count \u003e 0:\n            self.cmb_creators.SelectedIndex = 0\n\n    def OnCreatorChanged(self, sender, e):\n        self.cmb_warnings.Items.Clear()\n        self.element_ids = []\n\n        if self.cmb_creators.SelectedIndex \u003c 0:\n            return\n\n        self.selected_creator = self.creators[self.cmb_creators.SelectedIndex]\n        creator_data = self.data[self.selected_creator]\n\n        warning_types = sorted(creator_data.keys(), key=lambda x: len(creator_data[x]), reverse=True)\n\n        for wt in warning_types:\n            count = len(creator_data[wt])\n            self.cmb_warnings.Items.Add(wt + \" [\" + str(count) + \" element(s)]\")\n\n        if self.cmb_warnings.Items.Count \u003e 0:\n            self.cmb_warnings.SelectedIndex = 0\n\n    def OnWarningChanged(self, sender, e):\n        self.element_ids = []\n\n        if self.cmb_warnings.SelectedIndex \u003c 0:\n            return\n\n        creator_data = self.data[self.selected_creator]\n        warning_types = sorted(creator_data.keys(), key=lambda x: len(creator_data[x]), reverse=True)\n        self.selected_warning = warning_types[self.cmb_warnings.SelectedIndex]\n\n        elements_data = creator_data[self.selected_warning]\n        self.element_ids = [d[\u0027element_id\u0027] for d in elements_data]\n\n        self.lbl_info.Text = str(len(self.element_ids)) + \" element(s) concerne(s)\"\n\n    def OnIsolateCurrent(self, sender, e):\n        if not self.element_ids:\n            MessageBox.Show(\"Aucun element a isoler.\")\n            return\n\n        element_ids = self.element_ids\n\n        def _do():\n            current_view = uidoc.ActiveView\n            if isolate_elements(current_view.Id, element_ids):\n                uidoc.RefreshActiveView()\n                MessageBox.Show(str(len(element_ids)) + \" element(s) isole(s) dans la vue courante.\", \"Succes\", MessageBoxButtons.OK, MessageBoxIcon.Information)\n\n        run_in_api_context(_do)\n\n# Lancement\nif not creators:\n    MessageBox.Show(\"Aucun warning trouve.\", \"Information\", MessageBoxButtons.OK, MessageBoxIcon.Information)\n    OUT = \"Aucun warning\"\nelse:\n    try:\n        form = WarningForm(creators, data_by_creator)\n        # Show() (non-modal) au lieu de ShowDialog() : la fenetre reste\n        # ouverte sans bloquer Revit, pour pouvoir corriger les warnings\n        # directement dans le modele pendant qu\u0027elle est affichee. Toute\n        # action Revit declenchee depuis la fenetre passe par ExternalEvent\n        # (voir run_in_api_context) puisque le graphe Dynamo est deja\n        # termine a ce moment-la.\n        form.Show()\n        OUT = \"Termine - 🎩 by Manseur Mohamed\"\n    except Exception as ex:\n        MessageBox.Show(\"Erreur: \" + str(ex))\n        OUT = \"Erreur\"\n",
+      "Engine": "IronPython2",
+      "EngineName": "IronPython2",
+      "VariableInputPorts": true,
+      "Id": "0c07ccdd914c4bb9bf26097ac3922337",
+      "NodeType": "PythonScriptNode",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "dd80a1b6b91c4f8dbb06cb8e9ef5dec9",
+          "Name": "OUT",
+          "Description": "Result of the python script",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Exécute un script Python intégré."
+    }
+  ],
+  "Connectors": [],
+  "Dependencies": [],
+  "NodeLibraryDependencies": [],
+  "Thumbnail": "",
+  "GraphDocumentationURL": null,
+  "ExtensionWorkspaceData": [
+    {
+      "ExtensionGuid": "28992e1d-abb9-417f-8b1b-05e053bee670",
+      "Name": "Properties",
+      "Version": "2.19",
+      "Data": {}
+    },
+    {
+      "ExtensionGuid": "DFBD9CC0-DB40-457A-939E-8C8555555A9D",
+      "Name": "Generative Design",
+      "Version": "6.1",
+      "Data": {}
+    }
+  ],
+  "Author": "",
+  "Linting": {
+    "activeLinter": "Aucun",
+    "activeLinterId": "7b75fb44-43fd-4631-a878-29f4d5d8399a",
+    "warningCount": 0,
+    "errorCount": 0
+  },
+  "Bindings": [],
+  "View": {
+    "Dynamo": {
+      "ScaleFactor": 1.0,
+      "HasRunWithoutCrash": true,
+      "IsVisibleInDynamoLibrary": true,
+      "Version": "2.19.3.6394",
+      "RunType": "Manual",
+      "RunPeriod": "1000"
+    },
+    "Camera": {
+      "Name": "_Aperçu en arrière-plan",
+      "EyeX": -17.0,
+      "EyeY": 24.0,
+      "EyeZ": 50.0,
+      "LookX": 12.0,
+      "LookY": -13.0,
+      "LookZ": -58.0,
+      "UpX": 0.0,
+      "UpY": 1.0,
+      "UpZ": 0.0
+    },
+    "ConnectorPins": [],
+    "NodeViews": [
+      {
+        "Id": "0c07ccdd914c4bb9bf26097ac3922337",
+        "Name": "01 - Gestion Warnings par Createur",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 230.40000000000009,
+        "Y": 176.8
+      }
+    ],
+    "Annotations": [],
+    "X": 0.0,
+    "Y": 0.0,
+    "Zoom": 1.0
+  }
+}

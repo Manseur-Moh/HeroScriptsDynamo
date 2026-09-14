@@ -1,0 +1,102 @@
+{
+  "Uuid": "16db265b-75d9-45fc-9859-8f97f6867be4",
+  "IsCustomNode": false,
+  "Description": "",
+  "Name": "04 - Isoler les Elements Miroir",
+  "ElementResolver": {
+    "ResolutionMap": {}
+  },
+  "Inputs": [],
+  "Outputs": [],
+  "Nodes": [
+    {
+      "ConcreteType": "PythonNodeModels.PythonNode, PythonNodeModels",
+      "Code": "# ============================================================\n# 🎩 by Manseur Mohamed\n# Script Dynamo Python - Isoler les elements miroir\n# ============================================================\n\nimport clr\n\nclr.AddReference(\u0027RevitAPI\u0027)\nclr.AddReference(\u0027RevitServices\u0027)\nclr.AddReference(\u0027System\u0027)\nclr.AddReference(\u0027System.Drawing\u0027)\nclr.AddReference(\u0027System.Windows.Forms\u0027)\n\nfrom Autodesk.Revit.DB import *\nfrom RevitServices.Persistence import DocumentManager\n\n# Alias capture AVANT l\u0027import de System.Windows.Forms : ce module definit\n# ses propres symboles (dont \"View\") qui peuvent ecraser ceux de\n# Autodesk.Revit.DB. On fige les references dont on a besoin avant le\n# wildcard import suivant (meme convention que les autres scripts du projet).\nRevitView = View\nRevitTransaction = Transaction\n\nfrom System.Windows.Forms import *\nfrom System.Drawing import *\nfrom System.Collections.Generic import List\n\ndoc = DocumentManager.Instance.CurrentDBDocument\nuidoc = DocumentManager.Instance.CurrentUIApplication.ActiveUIDocument\n\n# ============================================================\n# ️ INTERFACE GRAPHIQUE (WinForms) - AJUSTÉE\n# ============================================================\nclass FormMiroir(Form):\n    def __init__(self):\n        Form.__init__(self)\n        self.InitializeComponent()\n        \n        self.mirrored_ids = []\n        self.mirrored_count = 0\n\n    def InitializeComponent(self):\n        self.Text = \"04 - Isoler les Éléments Miroir - 🎩 by Manseur Mohamed\"\n        self.Size = Size(550, 520)  # Hauteur globale ajustée\n        self.StartPosition = FormStartPosition.CenterScreen\n        self.FormBorderStyle = FormBorderStyle.FixedDialog\n        self.MaximizeBox = False\n        self.BackColor = Color.FromArgb(240, 240, 240)\n\n        # Titre\n        lbl_title = Label()\n        lbl_title.Text = \"Isoler les Éléments Miroir\"\n        lbl_title.Font = Font(\"Segoe UI\", 14, FontStyle.Bold)\n        lbl_title.ForeColor = Color.FromArgb(50, 50, 50)\n        lbl_title.Location = Point(20, 15)\n        lbl_title.AutoSize = True\n        self.Controls.Add(lbl_title)\n\n        # Signature\n        lbl_sig = Label()\n        lbl_sig.Text = \"🎩 by Manseur Mohamed\"\n        lbl_sig.Font = Font(\"Segoe UI\", 9, FontStyle.Italic)\n        lbl_sig.ForeColor = Color.FromArgb(100, 100, 100)\n        lbl_sig.Location = Point(380, 20)\n        lbl_sig.AutoSize = True\n        self.Controls.Add(lbl_sig)\n\n        # Info\n        lbl_info = Label()\n        lbl_info.Text = \"Ce script va isoler temporairement les éléments miroir dans la vue active.\"\n        lbl_info.Font = Font(\"Segoe UI\", 10)\n        lbl_info.Location = Point(20, 65)\n        lbl_info.Size = Size(490, 40)\n        self.Controls.Add(lbl_info)\n\n        # Bouton principal\n        self.btn_find = Button()\n        self.btn_find.Text = \"Isoler les Miroirs dans la Vue Active\"\n        self.btn_find.Font = Font(\"Segoe UI\", 11, FontStyle.Bold)\n        self.btn_find.Location = Point(20, 120)\n        self.btn_find.Size = Size(490, 50)\n        self.btn_find.BackColor = Color.FromArgb(0, 120, 215)\n        self.btn_find.ForeColor = Color.White\n        self.btn_find.FlatStyle = FlatStyle.Flat\n        self.btn_find.FlatAppearance.BorderSize = 0\n        self.btn_find.Click += self.find_and_prepare\n        self.Controls.Add(self.btn_find)\n\n        # Journal d\u0027exécution\n        lbl_log = Label()\n        lbl_log.Text = \"Journal d\u0027exécution :\"\n        lbl_log.Font = Font(\"Segoe UI\", 10, FontStyle.Bold)\n        lbl_log.Location = Point(20, 190)\n        lbl_log.Size = Size(490, 20)\n        self.Controls.Add(lbl_log)\n\n        self.txt_log = TextBox()\n        self.txt_log.Font = Font(\"Consolas\", 9)\n        self.txt_log.Multiline = True\n        self.txt_log.ReadOnly = True\n        self.txt_log.ScrollBars = ScrollBars.Vertical\n        self.txt_log.Location = Point(20, 215)\n        self.txt_log.Size = Size(490, 190)  # Hauteur ajustée pour laisser de la place en bas\n        self.Controls.Add(self.txt_log)\n\n        # Bouton Fermer (Remonté pour être sûr d\u0027être visible)\n        btn_close = Button()\n        btn_close.Text = \"Fermer\"\n        btn_close.Font = Font(\"Segoe UI\", 10, FontStyle.Bold)\n        btn_close.Location = Point(200, 425)  # Remonté à 425\n        btn_close.Size = Size(130, 35)\n        btn_close.BackColor = Color.FromArgb(100, 100, 100)\n        btn_close.ForeColor = Color.White\n        btn_close.FlatStyle = FlatStyle.Flat\n        btn_close.FlatAppearance.BorderSize = 0\n        btn_close.Click += lambda s, e: self.Close()\n        self.Controls.Add(btn_close)\n\n    def log(self, message):\n        self.txt_log.AppendText(message + \"\\r\\n\")\n\n    def find_and_prepare(self, sender, args):\n        self.txt_log.Clear()\n        self.mirrored_ids = []\n\n        try:\n            # Collecte des FamilyInstances miroir\n            collector = FilteredElementCollector(doc).OfClass(FamilyInstance)\n            # try/except PAR ELEMENT : .Mirrored peut lever une exception sur\n            # certaines instances (familles in-situ, geometrie non resolue).\n            # Sans ce garde-fou, un seul element defaillant faisait echouer\n            # toute la collecte et le script ne trouvait plus aucun miroir.\n            mirrored_elements = []\n            for e in collector:\n                try:\n                    if e.Mirrored:\n                        mirrored_elements.append(e)\n                except Exception:\n                    continue\n\n            if not mirrored_elements:\n                self.log(\"Aucun élément miroir trouvé.\")\n                MessageBox.Show(\"Aucun élément miroir trouvé dans le projet.\", \n                                \"Information\", MessageBoxButtons.OK, MessageBoxIcon.Information)\n                return\n\n            self.mirrored_count = len(mirrored_elements)\n            self.mirrored_ids = [e.Id for e in mirrored_elements]\n            self.log(str(self.mirrored_count) + \" élément(s) miroir trouvé(s).\")\n            self.log(\"Préparation de l\u0027isolation dans la vue active...\")\n\n            # Validation et fermeture\n            self.DialogResult = DialogResult.OK\n            self.Close()\n\n        except Exception as ex:\n            self.log(\"Erreur lors de la collecte : \" + str(ex))\n\n# ============================================================\n# 🚀 EXÉCUTION PRINCIPALE \u0026 TRANSACTION REVIT\n# ============================================================\nform = FormMiroir()\ndialog_result = form.ShowDialog()\n\nOUT = None\n\nif dialog_result == DialogResult.OK and form.mirrored_ids:\n    ids_list = List[ElementId](form.mirrored_ids)\n    \n    t = RevitTransaction(doc, \"Isoler éléments miroir\")\n    try:\n        t.Start()\n        \n        active_view = uidoc.ActiveView\n        \n        # Réinitialise un isolement temporaire précédent si existant\n        try:\n            active_view.ResetTemporaryHideIsolate()\n        except:\n            pass\n            \n        # Isolation temporaire des éléments miroir\n        active_view.IsolateElementsTemporary(ids_list)\n\n        # Commit AVANT toute autre operation : les appels form.log() qui\n        # suivaient etaient dans le try, donc la moindre erreur d\u0027affichage\n        # sur la fenetre deja fermee partait dans le except et declenchait un\n        # RollBack() qui annulait un isolement pourtant reussi.\n        t.Commit()\n\n        OUT = \"Succès : \" + str(form.mirrored_count) + \" éléments isolés dans la vue \" + active_view.Name\n        try:\n            form.log(\"Éléments isolés avec succès dans la vue : \" + active_view.Name)\n            form.log(\"(Pour retirer l\u0027isolement : icône ampoule en bas de la vue)\")\n        except Exception:\n            pass\n\n    except Exception as ex:\n        if t.HasStarted() and not t.HasEnded():\n            t.RollBack()\n        OUT = \"Erreur : \" + str(ex)\n        try:\n            form.log(\"Erreur lors de la transaction : \" + str(ex))\n        except Exception:\n            pass\nelse:\n    OUT = \"Opération annulée.\"",
+      "Engine": "IronPython2",
+      "EngineName": "IronPython2",
+      "VariableInputPorts": true,
+      "Id": "9bb1c5323dcc4a72bf5d7c21fcdd4b52",
+      "NodeType": "PythonScriptNode",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "3fe2873d23fe489c8adca946fee08ae6",
+          "Name": "OUT",
+          "Description": "Result of the python script",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Runs an embedded Python script."
+    }
+  ],
+  "Connectors": [],
+  "Dependencies": [],
+  "NodeLibraryDependencies": [],
+  "Thumbnail": "",
+  "GraphDocumentationURL": null,
+  "ExtensionWorkspaceData": [
+    {
+      "ExtensionGuid": "28992e1d-abb9-417f-8b1b-05e053bee670",
+      "Name": "Properties",
+      "Version": "2.19",
+      "Data": {}
+    },
+    {
+      "ExtensionGuid": "DFBD9CC0-DB40-457A-939E-8C8555555A9D",
+      "Name": "Generative Design",
+      "Version": "6.1",
+      "Data": {}
+    }
+  ],
+  "Author": "",
+  "Linting": {
+    "activeLinter": "None",
+    "activeLinterId": "7b75fb44-43fd-4631-a878-29f4d5d8399a",
+    "warningCount": 0,
+    "errorCount": 0
+  },
+  "Bindings": [],
+  "View": {
+    "Dynamo": {
+      "ScaleFactor": 1.0,
+      "HasRunWithoutCrash": true,
+      "IsVisibleInDynamoLibrary": true,
+      "Version": "2.19.3.6394",
+      "RunType": "Manual",
+      "RunPeriod": "1000"
+    },
+    "Camera": {
+      "Name": "_Background Preview",
+      "EyeX": -17.0,
+      "EyeY": 24.0,
+      "EyeZ": 50.0,
+      "LookX": 12.0,
+      "LookY": -13.0,
+      "LookZ": -58.0,
+      "UpX": 0.0,
+      "UpY": 1.0,
+      "UpZ": 0.0
+    },
+    "ConnectorPins": [],
+    "NodeViews": [
+      {
+        "Id": "9bb1c5323dcc4a72bf5d7c21fcdd4b52",
+        "Name": "04 - Isoler les Elements Miroir",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 101.5656838284587,
+        "Y": 22.751548796814674
+      }
+    ],
+    "Annotations": [],
+    "X": -68.0410338948211,
+    "Y": -10.388720986557274,
+    "Zoom": 0.8887892282971559
+  }
+}

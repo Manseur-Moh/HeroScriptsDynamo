@@ -1,0 +1,11 @@
+# Les .py de ce projet sont maintenus en LF pur (sans BOM) pour rester
+# strictement identiques au code Python integre dans le .dyn correspondant
+# (Nodes[0].Code) - ne jamais laisser Git les reecrire en CRLF au clone.
+*.py text eol=lf
+
+# Les .dyn sont du JSON (Dynamo) : ne pas toucher a l'octet pres, quel que
+# soit le systeme/parametrage de qui clone.
+*.dyn -text
+
+.gitignore text eol=lf
+.gitattributes text eol=lf

@@ -1,0 +1,102 @@
+{
+  "Uuid": "889ca8a4-fd0f-4f77-819a-1ba811f57d22",
+  "IsCustomNode": false,
+  "Description": "",
+  "Name": "03 - Isolement Permanent par Createur et Warning",
+  "ElementResolver": {
+    "ResolutionMap": {}
+  },
+  "Inputs": [],
+  "Outputs": [],
+  "Nodes": [
+    {
+      "ConcreteType": "PythonNodeModels.PythonNode, PythonNodeModels",
+      "Code": "# ============================================================\n# 🎩 by Manseur Mohamed\n# Script Dynamo Python - Creation automatique de vues par utilisateur\n# CORRIGE - Gestion des bounding box invalides (NaN/Infini)\n# ============================================================\n\nimport clr\nimport math\n\nclr.AddReference(\u0027RevitAPI\u0027)\nclr.AddReference(\u0027RevitServices\u0027)\nclr.AddReference(\u0027System\u0027)\nclr.AddReference(\u0027System.Drawing\u0027)\nclr.AddReference(\u0027System.Windows.Forms\u0027)\n\nfrom Autodesk.Revit.DB import *\nfrom RevitServices.Persistence import DocumentManager\n\nRevitView = View\nRevitTransaction = Transaction\n\nfrom System.Windows.Forms import *\nfrom System.Drawing import *\nfrom System.Collections.Generic import List\n\n# ============================================================\n# CONFIGURATION\n# ============================================================\ndoc = DocumentManager.Instance.CurrentDBDocument\nfacteur_zoom = 1.3\nlogs = []\n\n\ndef id_value(element_id):\n    # ElementId.IntegerValue est obsolete depuis Revit 2024 et supprime dans\n    # les versions recentes, remplace par ElementId.Value. On teste la\n    # presence de la nouvelle propriete pour rester compatible 2024-2027.\n    if hasattr(element_id, \"Value\"):\n        return element_id.Value\n    return element_id.IntegerValue\n\ndef log(msg):\n    logs.append(msg)\n\n# ============================================================\n# COLLECTE DES WARNINGS PAR PERSONNE\n# ============================================================\ndef get_person(element_id, mode=\"creator\"):\n    try:\n        info = WorksharingUtils.GetWorksharingTooltipInfo(doc, element_id)\n        if info:\n            if mode == \"creator\" and info.Creator:\n                return info.Creator\n            elif mode == \"last_changed_by\" and info.LastChangedBy:\n                return info.LastChangedBy\n    except Exception:\n        pass\n    return \"Inconnu\"\n\ndef collect_warnings_by_person(mode=\"creator\"):\n    data = {}\n    warnings = doc.GetWarnings()\n    log(\"Nombre total de warnings : \" + str(warnings.Count))\n\n    for w in warnings:\n        failing_ids = w.GetFailingElements()\n        for eid in failing_ids:\n            elem = doc.GetElement(eid)\n            if elem is None:\n                continue\n\n            person = get_person(eid, mode)\n\n            if person not in data:\n                data[person] = []\n\n            eid_int = int(id_value(eid))\n            if not any(int(id_value(existing)) == eid_int for existing in data[person]):\n                data[person].append(eid)\n\n    log(\"Personnes trouvees : \" + str(len(data)))\n    for p, elems in data.items():\n        log(\"  - \" + p + \" : \" + str(len(elems)) + \" element(s)\")\n    return data\n\n# ============================================================\n# OUTILS VUE 3D / MASQUAGE PERMANENT\n# ============================================================\nINVALID_VIEW_NAME_CHARS = set(\u0027\\\\:{}[]|;\u003c\u003e?`~\u0027)\n\ndef sanitize_view_name(text):\n    return \"\".join((c if c not in INVALID_VIEW_NAME_CHARS else \"_\") for c in text)\n\ndef delete_existing_view(view_name):\n    # On MATERIALISE d\u0027abord la liste des vues a supprimer (.ToElements())\n    # avant tout doc.Delete() : supprimer un element pendant qu\u0027on itere\n    # directement sur un FilteredElementCollector modifie la collection en\n    # cours de parcours, ce qui peut faire lever une exception a l\u0027iterateur\n    # (hors du try/except interne, donc fatale pour tout le script).\n    to_delete = []\n    for v in FilteredElementCollector(doc).OfClass(RevitView).ToElements():\n        try:\n            if not v.IsTemplate and v.Name == view_name:\n                to_delete.append(v.Id)\n        except Exception:\n            pass\n\n    deleted = False\n    for vid in to_delete:\n        try:\n            doc.Delete(vid)\n            deleted = True\n        except Exception:\n            pass\n    return deleted\n\ndef is_finite(value):\n    \"\"\"Verifie qu\u0027une valeur est finie (pas NaN, pas infini).\"\"\"\n    try:\n        return not (math.isnan(value) or math.isinf(value))\n    except:\n        return False\n\ndef get_bbox_for_elements(element_ids):\n    min_pt = None\n    max_pt = None\n    found = False\n\n    for eid in element_ids:\n        elem = doc.GetElement(eid)\n        if elem is None:\n            continue\n        try:\n            bb = elem.get_BoundingBox(None)\n            if bb is not None:\n                # Verifier que les coordonnees sont valides\n                if (is_finite(bb.Min.X) and is_finite(bb.Min.Y) and is_finite(bb.Min.Z) and\n                    is_finite(bb.Max.X) and is_finite(bb.Max.Y) and is_finite(bb.Max.Z)):\n                    \n                    if not found:\n                        min_pt = XYZ(bb.Min.X, bb.Min.Y, bb.Min.Z)\n                        max_pt = XYZ(bb.Max.X, bb.Max.Y, bb.Max.Z)\n                        found = True\n                    else:\n                        min_pt = XYZ(min(min_pt.X, bb.Min.X), min(min_pt.Y, bb.Min.Y), min(min_pt.Z, bb.Min.Z))\n                        max_pt = XYZ(max(max_pt.X, bb.Max.X), max(max_pt.Y, bb.Max.Y), max(max_pt.Z, bb.Max.Z))\n        except Exception:\n            pass\n\n    if not found:\n        return None, None\n    return min_pt, max_pt\n\ndef create_isolated_3d_view(view_name, element_ids, zoom_factor):\n    # Trouver le type de vue 3D\n    vft_3d = None\n    for vft in FilteredElementCollector(doc).OfClass(ViewFamilyType):\n        if vft.ViewFamily == ViewFamily.ThreeDimensional:\n            vft_3d = vft\n            break\n    if vft_3d is None:\n        return None, \"Aucun type de vue 3D disponible dans ce document.\", 0\n\n    # Creer la vue\n    new_view = View3D.CreateIsometric(doc, vft_3d.Id)\n    new_view.Name = view_name\n\n    target_ints = set(int(id_value(eid)) for eid in element_ids)\n\n    # Cadrage avec validation\n    min_pt, max_pt = get_bbox_for_elements(element_ids)\n    if min_pt is not None and max_pt is not None:\n        # Verifier que la taille est raisonnable\n        size_x = max_pt.X - min_pt.X\n        size_y = max_pt.Y - min_pt.Y\n        size_z = max_pt.Z - min_pt.Z\n        \n        if is_finite(size_x) and is_finite(size_y) and is_finite(size_z) and size_x \u003e 0 and size_y \u003e 0 and size_z \u003e 0:\n            center = XYZ((min_pt.X + max_pt.X) / 2.0, (min_pt.Y + max_pt.Y) / 2.0, (min_pt.Z + max_pt.Z) / 2.0)\n            size_x = max(size_x * zoom_factor, 5.0)\n            size_y = max(size_y * zoom_factor, 5.0)\n            size_z = max(size_z * zoom_factor, 5.0)\n\n            section_box = BoundingBoxXYZ()\n            section_box.Min = XYZ(center.X - size_x / 2.0, center.Y - size_y / 2.0, center.Z - size_z / 2.0)\n            section_box.Max = XYZ(center.X + size_x / 2.0, center.Y + size_y / 2.0, center.Z + size_z / 2.0)\n            \n            # Verifier une derniere fois que la section box est valide\n            if (is_finite(section_box.Min.X) and is_finite(section_box.Max.X) and\n                is_finite(section_box.Min.Y) and is_finite(section_box.Max.Y) and\n                is_finite(section_box.Min.Z) and is_finite(section_box.Max.Z)):\n                try:\n                    new_view.SetSectionBox(section_box)\n                    new_view.IsSectionBoxActive = True\n                except Exception as ex:\n                    log(\"  Warning cadrage : \" + str(ex))\n        else:\n            log(\"  Warning : bounding box de taille invalide, pas de cadrage\")\n    else:\n        log(\"  Warning : aucun element avec bounding box valide, pas de cadrage\")\n\n    # Masquage permanent\n    #\n    # doc.Regenerate() est indispensable ici : la vue vient d\u0027etre creee (et\n    # sa section box vient d\u0027etre posee) dans la MEME transaction. Sans\n    # regeneration, un FilteredElementCollector limite a new_view.Id peut ne\n    # rien renvoyer du tout - on n\u0027aurait alors rien masque et l\u0027isolement\n    # permanent serait silencieusement vide.\n    try:\n        doc.Regenerate()\n    except Exception:\n        pass\n\n    other_ids = List[ElementId]()\n    for elem in FilteredElementCollector(doc, new_view.Id).WhereElementIsNotElementType():\n        try:\n            if int(id_value(elem.Id)) in target_ints:\n                continue\n            if elem.CanBeHidden(new_view):\n                other_ids.Add(elem.Id)\n        except Exception:\n            continue\n\n    hidden_count = 0\n    warning_msg = None\n    if other_ids.Count \u003e 0:\n        try:\n            new_view.HideElements(other_ids)\n            hidden_count = other_ids.Count\n        except Exception as ex:\n            warning_msg = \"Masquage partiel : \" + str(ex)\n\n    return new_view, warning_msg, hidden_count\n\n# ============================================================\n# INTERFACE MINIMALE\n# ============================================================\nclass AutoViewForm(Form):\n    def __init__(self):\n        Form.__init__(self)\n        self.mode = \"creator\"\n        self.InitializeComponent()\n\n    def InitializeComponent(self):\n        self.Text = \"03 - Isolement Permanent par Createur et Warning - 🎩 by Manseur Mohamed\"\n        self.Size = Size(500, 320)\n        self.StartPosition = FormStartPosition.CenterScreen\n        self.FormBorderStyle = FormBorderStyle.FixedDialog\n        self.MaximizeBox = False\n        self.BackColor = Color.FromArgb(240, 240, 240)\n\n        lbl_title = Label()\n        lbl_title.Text = \"Vues 3D par utilisateur\"\n        lbl_title.Font = Font(\"Segoe UI\", 14, FontStyle.Bold)\n        lbl_title.ForeColor = Color.FromArgb(50, 50, 50)\n        lbl_title.Location = Point(20, 15)\n        lbl_title.AutoSize = True\n        self.Controls.Add(lbl_title)\n\n        lbl_sig = Label()\n        lbl_sig.Text = \"🎩 by Manseur Mohamed\"\n        lbl_sig.Font = Font(\"Segoe UI\", 9, FontStyle.Italic)\n        lbl_sig.ForeColor = Color.FromArgb(100, 100, 100)\n        lbl_sig.Location = Point(330, 20)\n        lbl_sig.AutoSize = True\n        self.Controls.Add(lbl_sig)\n\n        lbl_mode = Label()\n        lbl_mode.Text = \"Creer une vue 3D par utilisateur pour :\"\n        lbl_mode.Font = Font(\"Segoe UI\", 10)\n        lbl_mode.Location = Point(20, 60)\n        lbl_mode.AutoSize = True\n        self.Controls.Add(lbl_mode)\n\n        self.cmb_mode = ComboBox()\n        self.cmb_mode.DropDownStyle = ComboBoxStyle.DropDownList\n        self.cmb_mode.Font = Font(\"Segoe UI\", 10)\n        self.cmb_mode.Location = Point(20, 85)\n        self.cmb_mode.Size = Size(450, 25)\n        self.cmb_mode.Items.Add(\"Createur (auteur original)\")\n        self.cmb_mode.Items.Add(\"Dernier modificateur\")\n        self.cmb_mode.Items.Add(\"Les deux (createur + modificateur)\")\n        self.cmb_mode.SelectedIndex = 0\n        self.Controls.Add(self.cmb_mode)\n\n        lbl_info = Label()\n        lbl_info.Text = \"Une vue 3D sera creee par utilisateur avec TOUS ses warnings\\r\\n(isolement permanent dans le fichier).\"\n        lbl_info.Font = Font(\"Segoe UI\", 9, FontStyle.Italic)\n        lbl_info.ForeColor = Color.FromArgb(80, 80, 80)\n        lbl_info.Location = Point(20, 125)\n        lbl_info.Size = Size(450, 40)\n        self.Controls.Add(lbl_info)\n\n        self.btn_create = Button()\n        self.btn_create.Text = \"Creer les vues automatiquement\"\n        self.btn_create.Font = Font(\"Segoe UI\", 11, FontStyle.Bold)\n        self.btn_create.Size = Size(450, 50)\n        self.btn_create.Location = Point(20, 175)\n        self.btn_create.BackColor = Color.FromArgb(0, 120, 215)\n        self.btn_create.ForeColor = Color.White\n        self.btn_create.FlatStyle = FlatStyle.Flat\n        self.btn_create.FlatAppearance.BorderSize = 0\n        self.btn_create.Click += self.OnCreate\n        self.Controls.Add(self.btn_create)\n\n        self.btn_cancel = Button()\n        self.btn_cancel.Text = \"Annuler\"\n        self.btn_cancel.Font = Font(\"Segoe UI\", 10)\n        self.btn_cancel.Size = Size(450, 35)\n        self.btn_cancel.Location = Point(20, 235)\n        self.btn_cancel.BackColor = Color.FromArgb(100, 100, 100)\n        self.btn_cancel.ForeColor = Color.White\n        self.btn_cancel.FlatStyle = FlatStyle.Flat\n        self.btn_cancel.FlatAppearance.BorderSize = 0\n        self.btn_cancel.Click += self.OnCancel\n        self.Controls.Add(self.btn_cancel)\n\n    def OnCreate(self, sender, event):\n        idx = self.cmb_mode.SelectedIndex\n        if idx == 0:\n            self.mode = \"creator\"\n        elif idx == 1:\n            self.mode = \"last_changed_by\"\n        else:\n            self.mode = \"both\"\n        self.DialogResult = DialogResult.OK\n        self.Close()\n\n    def OnCancel(self, sender, event):\n        self.DialogResult = DialogResult.Cancel\n        self.Close()\n\n# ============================================================\n# FONCTION PRINCIPALE\n# ============================================================\ndef main():\n    if doc.GetWarnings().Count == 0:\n        MessageBox.Show(\"Aucun warning trouve dans ce document.\", \"Information\", MessageBoxButtons.OK, MessageBoxIcon.Information)\n        return {\"success\": False, \"message\": \"Aucun warning.\"}\n\n    form = AutoViewForm()\n    if form.ShowDialog() != DialogResult.OK:\n        return {\"success\": False, \"message\": \"Operation annulee.\"}\n\n    mode = form.mode\n    results = []\n    total_views = 0\n    total_errors = 0\n\n    modes_to_process = []\n    if mode == \"creator\":\n        modes_to_process = [(\"creator\", \"CREATEUR\")]\n    elif mode == \"last_changed_by\":\n        modes_to_process = [(\"last_changed_by\", \"MODIFICATEUR\")]\n    else:\n        modes_to_process = [(\"creator\", \"CREATEUR\"), (\"last_changed_by\", \"MODIFICATEUR\")]\n\n    for current_mode, prefix in modes_to_process:\n        log(\"--- Mode : \" + prefix + \" ---\")\n        data_by_person = collect_warnings_by_person(current_mode)\n\n        if not data_by_person:\n            log(\"Aucune donnee pour ce mode.\")\n            continue\n\n        for person, element_ids in data_by_person.items():\n            view_name = sanitize_view_name(\"WARN_{}_{}\".format(prefix, person))\n            if len(view_name) \u003e 180:\n                view_name = view_name[:180]\n\n            log(\"Traitement : \" + view_name + \" (\" + str(len(element_ids)) + \" elements)\")\n\n            t = RevitTransaction(doc, \"Vue \" + view_name)\n            try:\n                t.Start()\n                delete_existing_view(view_name)\n                new_view, warn_msg, hidden_count = create_isolated_3d_view(view_name, element_ids, facteur_zoom)\n\n                if new_view is not None:\n                    t.Commit()\n                    results.append({\n                        \"view\": view_name,\n                        \"person\": person,\n                        \"mode\": prefix,\n                        \"elements\": len(element_ids),\n                        \"hidden\": hidden_count\n                    })\n                    total_views += 1\n                    log(\"  -\u003e Vue creee avec succes\")\n                else:\n                    t.RollBack()\n                    total_errors += 1\n                    results.append({\"error\": view_name + \" : \" + str(warn_msg)})\n                    log(\"  -\u003e ERREUR : \" + str(warn_msg))\n            except Exception as ex:\n                if t.HasStarted() and not t.HasEnded():\n                    t.RollBack()\n                total_errors += 1\n                results.append({\"error\": view_name + \" : \" + str(ex)})\n                log(\"  -\u003e EXCEPTION : \" + str(ex))\n\n    message = \"Termine !\\n\\n\" + str(total_views) + \" vue(s) creee(s) avec isolement permanent.\"\n    if total_errors \u003e 0:\n        message += \"\\n\" + str(total_errors) + \" erreur(s).\"\n    message += \"\\n\\nVues creees :\\n\"\n    for r in results:\n        if \"error\" not in r:\n            message += \"- \" + r[\"view\"] + \" [\" + r[\"person\"] + \"] : \" + str(r[\"elements\"]) + \" element(s)\\n\"\n\n    if total_errors \u003e 0:\n        message += \"\\nErreurs :\\n\"\n        for r in results:\n            if \"error\" in r:\n                message += \"- \" + r[\"error\"] + \"\\n\"\n\n    MessageBox.Show(message, \"Resultat\", MessageBoxButtons.OK, \n                    MessageBoxIcon.Information if total_views \u003e 0 else MessageBoxIcon.Warning)\n\n    return {\n        \"success\": total_views \u003e 0,\n        \"total_views\": total_views,\n        \"total_errors\": total_errors,\n        \"logs\": logs,\n        \"views\": results\n    }\n\n# ============================================================\n# EXECUTION\n# ============================================================\ntry:\n    OUT = main()\nexcept Exception as ex:\n    MessageBox.Show(\"Erreur inattendue : \" + str(ex) + \"\\n\\nLogs :\\n\" + \"\\n\".join(logs), \"Erreur\", MessageBoxButtons.OK, MessageBoxIcon.Error)\n    OUT = {\"success\": False, \"message\": \"Erreur : \" + str(ex), \"logs\": logs}",
+      "Engine": "IronPython2",
+      "EngineName": "IronPython2",
+      "VariableInputPorts": true,
+      "Id": "73eec9be600d4aea8582dcc07519b7ab",
+      "NodeType": "PythonScriptNode",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "98c3e1df75994cac84f605fb095c98f9",
+          "Name": "OUT",
+          "Description": "Result of the python script",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Runs an embedded Python script."
+    }
+  ],
+  "Connectors": [],
+  "Dependencies": [],
+  "NodeLibraryDependencies": [],
+  "Thumbnail": "",
+  "GraphDocumentationURL": null,
+  "ExtensionWorkspaceData": [
+    {
+      "ExtensionGuid": "28992e1d-abb9-417f-8b1b-05e053bee670",
+      "Name": "Properties",
+      "Version": "2.19",
+      "Data": {}
+    },
+    {
+      "ExtensionGuid": "DFBD9CC0-DB40-457A-939E-8C8555555A9D",
+      "Name": "Generative Design",
+      "Version": "6.1",
+      "Data": {}
+    }
+  ],
+  "Author": "",
+  "Linting": {
+    "activeLinter": "None",
+    "activeLinterId": "7b75fb44-43fd-4631-a878-29f4d5d8399a",
+    "warningCount": 0,
+    "errorCount": 0
+  },
+  "Bindings": [],
+  "View": {
+    "Dynamo": {
+      "ScaleFactor": 1.0,
+      "HasRunWithoutCrash": true,
+      "IsVisibleInDynamoLibrary": true,
+      "Version": "2.19.3.6394",
+      "RunType": "Manual",
+      "RunPeriod": "1000"
+    },
+    "Camera": {
+      "Name": "_Background Preview",
+      "EyeX": -17.0,
+      "EyeY": 24.0,
+      "EyeZ": 50.0,
+      "LookX": 12.0,
+      "LookY": -13.0,
+      "LookZ": -58.0,
+      "UpX": 0.0,
+      "UpY": 1.0,
+      "UpZ": 0.0
+    },
+    "ConnectorPins": [],
+    "NodeViews": [
+      {
+        "Id": "73eec9be600d4aea8582dcc07519b7ab",
+        "Name": "03 - Isolement Permanent par Createur et Warning",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 230.4,
+        "Y": 176.8
+      }
+    ],
+    "Annotations": [],
+    "X": -163.77061855735099,
+    "Y": 11.532640867940245,
+    "Zoom": 0.86797750764901582
+  }
+}
