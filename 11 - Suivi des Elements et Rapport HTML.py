@@ -101,6 +101,7 @@ import re
 import codecs
 import zlib
 import base64
+import traceback
 from datetime import datetime
 
 from Autodesk.Revit.DB import (
@@ -3297,6 +3298,7 @@ APP_JS_TEMPLATE = r"""
 # unanticipated, fail closed to an empty payload (the report falls back to
 # its folder-picker screen) instead of letting the whole script error out
 # and produce no report at all.
+PAYLOAD_BUILD_ERROR = None
 try:
     PAYLOAD_GZ = gzip_b64(json.dumps({
         "latest": latest_label,
@@ -3305,7 +3307,21 @@ try:
         "availableParams": available_params,
     }, separators=(',', ':')))
 except Exception:
+    # Ne PAS avaler l'erreur en silence : sans ce message, un echec ici
+    # produit un rapport HTML qui s'ouvre sur l'ecran de secours "Charger
+    # le rapport" (quasi vide au premier coup d'oeil) sans la moindre
+    # indication de ce qui a rate, ni cote navigateur ni cote Dynamo.
     PAYLOAD_GZ = ""
+    PAYLOAD_BUILD_ERROR = traceback.format_exc()
+    try:
+        WinForms.MessageBox.Show(
+            "Les donnees n'ont pas pu etre integrees dans le rapport HTML "
+            "(il s'ouvrira sur l'ecran 'Charger le rapport' au lieu d'afficher "
+            "directement les donnees) :\n\n" + PAYLOAD_BUILD_ERROR,
+            "Avertissement - Rapport incomplet",
+            WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Warning)
+    except Exception:
+        pass
 
 
 def build_app_html(initial_tab):
@@ -3502,3 +3518,9 @@ OUT = [
     "Ouvrez l'un des rapports HTML ci-dessus puis choisissez ce dossier " +
         "(" + output_folder + ") quand il le demande - les donnees sont lues directement depuis ces fichiers."
 ]
+
+if PAYLOAD_BUILD_ERROR:
+    OUT.append(
+        "ATTENTION : integration des donnees dans le HTML echouee - le rapport "
+        "s'ouvrira sur l'ecran 'Charger le rapport' (les fichiers CSV/JSON sont "
+        "bien ecrits, choisissez ce dossier a l'ouverture). Detail :\n" + PAYLOAD_BUILD_ERROR)
