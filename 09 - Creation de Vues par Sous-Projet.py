@@ -489,4 +489,12 @@ else:
             form.ShowDialog()
             OUT = "Termine - " + str(len(form.selected_worksets)) + " sous-projet(s) traite(s) - 🎩 by Manseur Mohamed"
         except Exception as ex:
+            # Sans ce MessageBox, une exception levee avant l'affichage de la
+            # fenetre se terminerait en silence : Dynamo affiche "run
+            # complete" sans que l'utilisateur ne voie ni interface ni
+            # message d'erreur - impossible a diagnostiquer.
+            try:
+                MessageBox.Show("Erreur inattendue : " + str(ex), "Erreur", MessageBoxButtons.OK, MessageBoxIcon.Error)
+            except Exception:
+                pass
             OUT = "Erreur inattendue : " + str(ex)

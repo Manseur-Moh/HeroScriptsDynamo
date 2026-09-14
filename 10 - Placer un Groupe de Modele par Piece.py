@@ -49,36 +49,6 @@ def is_model_group_category(cat):
         return False
 
 
-def get_model_group_types(doc):
-    types = [gt for gt in FilteredElementCollector(doc).OfClass(GroupType) if is_model_group_category(gt.Category)]
-    return sorted(types, key=lambda gt: gt.Name)
-
-
-def get_placed_rooms(doc):
-    """Pieces reellement placees (surface > 0 et point d'implantation
-    valide) - exclut les pieces "non placees" (Area == 0, Location None)
-    qui ne peuvent de toute facon pas recevoir de groupe."""
-    rooms = []
-    for r in FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_Rooms).WhereElementIsNotElementType():
-        try:
-            if r.Area > 0 and isinstance(r.Location, LocationPoint):
-                rooms.append(r)
-        except Exception:
-            continue
-    return rooms
-
-
-def get_placed_doors(doc):
-    doors = []
-    for d in FilteredElementCollector(doc).OfClass(FamilyInstance).OfCategory(BuiltInCategory.OST_Doors):
-        try:
-            if d.Symbol is not None:
-                doors.append(d)
-        except Exception:
-            continue
-    return doors
-
-
 def safe_family_name(sym):
     try:
         return sym.Family.Name if sym.Family is not None else "Inconnu"
@@ -91,6 +61,75 @@ def safe_type_name(sym):
         return sym.Name
     except Exception:
         return "Sans nom"
+
+
+def collect_ids_safe(collector):
+    """Recupere les ElementId d'un FilteredElementCollector sans jamais
+    lever - ToElementIds() peut lever une InternalException en
+    worksharing des qu'un seul element du lot echoue a se regenerer (cas
+    frequent pour les Pieces non placees/redondantes) ; sans ce filet,
+    UNE piece corrompue suffisait a faire echouer toute la collecte, et
+    donc tout le script, AVANT meme l'affichage de l'interface - sans le
+    moindre message a l'ecran (l'exception remontait jusqu'au bloc
+    try/except final, qui ne montre pas de MessageBox)."""
+    try:
+        return list(collector.ToElementIds())
+    except Exception:
+        pass
+    ids = []
+    try:
+        for e in collector:
+            try:
+                ids.append(e.Id)
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return ids
+
+
+def get_model_group_types(doc):
+    types = []
+    for eid in collect_ids_safe(FilteredElementCollector(doc).OfClass(GroupType)):
+        try:
+            gt = doc.GetElement(eid)
+            if gt is not None and is_model_group_category(gt.Category):
+                types.append(gt)
+        except Exception:
+            continue
+    try:
+        return sorted(types, key=lambda gt: safe_type_name(gt))
+    except Exception:
+        return types
+
+
+def get_placed_rooms(doc):
+    """Pieces reellement placees (surface > 0 et point d'implantation
+    valide) - exclut les pieces "non placees" (Area == 0, Location None)
+    qui ne peuvent de toute facon pas recevoir de groupe."""
+    rooms = []
+    collector = FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_Rooms).WhereElementIsNotElementType()
+    for eid in collect_ids_safe(collector):
+        try:
+            r = doc.GetElement(eid)
+            if r is not None and r.Area > 0 and isinstance(r.Location, LocationPoint):
+                rooms.append(r)
+        except Exception:
+            continue
+    return rooms
+
+
+def get_placed_doors(doc):
+    doors = []
+    collector = FilteredElementCollector(doc).OfClass(FamilyInstance).OfCategory(BuiltInCategory.OST_Doors)
+    for eid in collect_ids_safe(collector):
+        try:
+            d = doc.GetElement(eid)
+            if d is not None and d.Symbol is not None:
+                doors.append(d)
+        except Exception:
+            continue
+    return doors
 
 
 def get_placed_door_types(doors):
@@ -268,7 +307,7 @@ class PlacementForm(Form):
         self.cmb_groupe.Location = Point(20, y + 25)
         self.cmb_groupe.Size = Size(510, 25)
         for gt in self.group_types:
-            self.cmb_groupe.Items.Add(gt.Name)
+            self.cmb_groupe.Items.Add(safe_type_name(gt))
         self.Controls.Add(self.cmb_groupe)
 
         y += 65
@@ -537,4 +576,13 @@ def main():
 try:
     OUT = main()
 except Exception as ex:
+    # Sans ce MessageBox, une exception levee avant le premier appel a une
+    # fenetre/MessageBox a l'interieur de main() se serait terminee ici en
+    # silence : Dynamo affiche "run complete" (OUT est bien assigne, aucune
+    # exception Python ne remonte au moteur du noeud), mais l'utilisateur
+    # ne voit ni interface ni message d'erreur - impossible a diagnostiquer.
+    try:
+        MessageBox.Show("Erreur inattendue : " + str(ex), "Erreur", MessageBoxButtons.OK, MessageBoxIcon.Error)
+    except Exception:
+        pass
     OUT = {"success": False, "message": "Erreur inattendue : " + str(ex)}

@@ -711,4 +711,12 @@ def main():
 try:
     OUT = main()
 except Exception as ex:
+    # Sans ce MessageBox, une exception levee avant le premier appel a une
+    # fenetre a l'interieur de main() se terminerait en silence : Dynamo
+    # affiche "run complete" (OUT est bien assigne) sans que l'utilisateur
+    # ne voie ni interface ni message d'erreur - impossible a diagnostiquer.
+    try:
+        MessageBox.Show("Erreur inattendue : " + str(ex), "Erreur", MessageBoxButtons.OK, MessageBoxIcon.Error)
+    except Exception:
+        pass
     OUT = {"success": False, "message": "Erreur inattendue : " + str(ex)}
