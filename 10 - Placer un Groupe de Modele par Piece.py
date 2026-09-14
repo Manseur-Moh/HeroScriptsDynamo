@@ -34,15 +34,13 @@ from System.Drawing import *
 
 doc = DocumentManager.Instance.CurrentDBDocument
 
-# Sens de rotation (-1 = horaire, repere Revit) et decalage (0/90/180/270
-# degres) pour caler l'orientation du groupe sur la porte : la geometrie
-# "avant" d'un groupe de modele et la convention "dedans/dehors" d'une
-# famille de porte dependent de comment elles ont ete dessinees - il n'y a
-# pas de reglage universel valable pour toutes les familles (le plugin
-# BIMATIKA d'origine, dont ce script reprend la logique, le documente
-# explicitement comme des constantes a calibrer au cas par cas). Exposes
-# dans l'interface (case a cocher + liste deroulante) plutot qu'en dur,
-# pour pouvoir les ajuster sans modifier le script.
+# Convention : le groupe de modele, place sans rotation (0 degre), est
+# suppose avoir ete dessine avec sa porte de reference "en haut" (Nord,
+# +Y). La rotation appliquee est donc directement le cap de la porte
+# reelle de la piece (voir cap_porte) - si la porte de la piece est deja
+# au Nord, aucune rotation n'est faite ; sinon le groupe tourne exactement
+# de l'angle necessaire pour que son orientation par defaut corresponde a
+# la porte reelle.
 AUCUNE_PORTE = "<Aucune - pas de rotation>"
 
 
@@ -325,14 +323,12 @@ class PlacementForm(Form):
         self.selected_param = None
         self.selected_value = None
         self.selected_door_type = None
-        self.selected_offset = 0.0
-        self.selected_signe = -1.0
 
         self.InitializeComponent()
 
     def InitializeComponent(self):
         self.Text = "10 - Placer un Groupe de Modele par Piece - 🎩 by Manseur Mohamed"
-        self.Size = Size(560, 530)
+        self.Size = Size(560, 435)
         self.StartPosition = FormStartPosition.CenterScreen
         self.FormBorderStyle = FormBorderStyle.FixedDialog
         self.MaximizeBox = False
@@ -434,34 +430,6 @@ class PlacementForm(Form):
         self.Controls.Add(self.cmb_porte)
 
         y += 65
-        lbl_calib = Label()
-        lbl_calib.Text = "Calibrage de l'orientation (si le sens ne correspond pas) :"
-        lbl_calib.Font = Font("Segoe UI", 9, FontStyle.Italic)
-        lbl_calib.ForeColor = Color.FromArgb(100, 100, 100)
-        lbl_calib.Location = Point(20, y)
-        lbl_calib.AutoSize = True
-        self.Controls.Add(lbl_calib)
-
-        y += 25
-        self.cmb_offset = ComboBox()
-        self.cmb_offset.DropDownStyle = ComboBoxStyle.DropDownList
-        self.cmb_offset.Font = Font("Segoe UI", 9)
-        self.cmb_offset.Location = Point(20, y)
-        self.cmb_offset.Size = Size(150, 25)
-        for label in ("Decalage 0", "Decalage 90", "Decalage 180", "Decalage 270"):
-            self.cmb_offset.Items.Add(label)
-        self.cmb_offset.SelectedIndex = 0
-        self.Controls.Add(self.cmb_offset)
-
-        self.chk_invert = CheckBox()
-        self.chk_invert.Text = "Inverser le sens de rotation"
-        self.chk_invert.Font = Font("Segoe UI", 9)
-        self.chk_invert.Location = Point(190, y + 3)
-        self.chk_invert.Size = Size(340, 24)
-        self.chk_invert.Checked = True  # correspond a SIGNE = -1 (comportement par defaut du plugin d'origine)
-        self.Controls.Add(self.chk_invert)
-
-        y += 65
         self.btn_ok = Button()
         self.btn_ok.Text = "Placer les groupes"
         self.btn_ok.Font = Font("Segoe UI", 10, FontStyle.Bold)
@@ -527,9 +495,6 @@ class PlacementForm(Form):
         porte_idx = self.cmb_porte.SelectedIndex
         self.selected_door_type = self.door_types[porte_idx - 1] if porte_idx > 0 else None
 
-        self.selected_offset = float(self.cmb_offset.SelectedIndex * 90)
-        self.selected_signe = -1.0 if self.chk_invert.Checked else 1.0
-
         self.DialogResult = DialogResult.OK
         self.Close()
 
@@ -569,8 +534,6 @@ def main():
     param_name = form.selected_param
     valeur = form.selected_value
     door_type = form.selected_door_type
-    signe = form.selected_signe
-    offset = form.selected_offset
 
     cibles = [r for r in rooms if get_room_param_value(r, param_name) == valeur]
     cible_ids = set(int(r.Id.IntegerValue) for r in cibles)
@@ -655,9 +618,13 @@ def main():
             porte = porte_par_piece.get(room_id) if room_id is not None else None
             if porte is not None:
                 try:
-                    cap_d = cap_porte(porte.FacingOrientation)
-                    rot = signe * (cap_d + offset)
-                    rot = ((rot % 360.0) + 360.0) % 360.0
+                    # Le groupe place sans rotation est suppose avoir sa
+                    # porte de reference au Nord (+Y) - la rotation a
+                    # appliquer est donc directement le cap de la porte
+                    # reelle : si elle est deja au Nord, rot = 0, rien a
+                    # faire ; sinon le groupe tourne exactement de cet
+                    # angle pour correspondre a la porte de la piece.
+                    rot = cap_porte(porte.FacingOrientation)
 
                     if rot > 0.01 and rot < 359.99:
                         room_pt = room.Location.Point
