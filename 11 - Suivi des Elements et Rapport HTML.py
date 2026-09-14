@@ -134,12 +134,40 @@ def open_csv_for_read(path):
     else:
         return open(path, mode='r', newline='', encoding='utf-8')
 
+def sanitize_str(v):
+    """Convertit une chaine potentiellement corrompue en unicode propre.
+
+    Certaines proprietes de l'API Revit - WorksharingUtils.
+    GetWorksharingTooltipInfo().Creator/.LastChangedBy en particulier,
+    defaut documente de cette API - peuvent renvoyer un nom d'utilisateur
+    dont les caracteres accentues ont ete mal convertis depuis l'encodage
+    Windows du systeme (ex: cp1252) plutot qu'en veritable Unicode/UTF-8,
+    sous IronPython2. Tant que cette valeur reste une chaine Python
+    normale, rien ne le remarque ; des qu'elle atteint json.dumps() (pour
+    integrer les donnees dans le rapport HTML), UnicodeDecodeError plante
+    la construction du rapport EN ENTIER a cause d'un seul champ d'un
+    seul element."""
+    if v is None or not IS_PY2:
+        return v
+    if isinstance(v, unicode):
+        return v
+    if isinstance(v, str):
+        for enc in ("utf-8", "cp1252", "latin-1"):
+            try:
+                return v.decode(enc)
+            except Exception:
+                continue
+        return u""
+    return v
+
+
 def to_row_values(values):
     if IS_PY2:
         out = []
         for v in values:
+            v = sanitize_str(v)
             try:
-                out.append(unicode(v))
+                out.append(v if isinstance(v, unicode) else unicode(v))
             except:
                 out.append(v)
         return out
@@ -606,8 +634,9 @@ def get_all_parameters(el, document):
             if not val:
                 continue
             val = val.strip() if hasattr(val, "strip") else str(val)
+            val = sanitize_str(val)
             if val:
-                result[name] = val
+                result[sanitize_str(name)] = val
         except:
             pass
     return result
@@ -801,7 +830,13 @@ def html_escape(s):
     # Plain-text-into-HTML escaping for values placed directly into the
     # page markup (project name, run date). A project name can contain
     # &, <, >, or " - none of that should reach the page unescaped.
-    return (str(s).replace("&", "&amp;").replace("<", "&lt;")
+    # sanitize_str() first : str(s) alone would raise/mojibake on a
+    # corrupted-encoding value (see sanitize_str) once the page is written
+    # to disk as UTF-8.
+    s = sanitize_str(s)
+    if not isinstance(s, (unicode if IS_PY2 else str)):
+        s = unicode(s) if IS_PY2 else str(s)
+    return (s.replace("&", "&amp;").replace("<", "&lt;")
             .replace(">", "&gt;").replace('"', "&quot;"))
 
 

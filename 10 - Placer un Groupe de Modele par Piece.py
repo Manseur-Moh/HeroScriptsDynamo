@@ -332,7 +332,7 @@ class PlacementForm(Form):
 
     def InitializeComponent(self):
         self.Text = "10 - Placer un Groupe de Modele par Piece - 🎩 by Manseur Mohamed"
-        self.Size = Size(560, 495)
+        self.Size = Size(560, 530)
         self.StartPosition = FormStartPosition.CenterScreen
         self.FormBorderStyle = FormBorderStyle.FixedDialog
         self.MaximizeBox = False
